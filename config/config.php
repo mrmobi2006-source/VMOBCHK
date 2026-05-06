@@ -7,9 +7,9 @@ $config['timeZone'] = 'UTC';
 $config['anti_spam_timer'] = 15;
 $config['sk_keys'] = explode(',', getenv('SK_KEYS') ?: '');
 
-$config['db']['hostname'] = getenv('DB_HOST') ?: '127.0.0.1';
+$config['db']['hostname'] = getenv('DB_HOST') ?: 'mysql://root:GkTnEDVazywNfxMOfparmAIaCiMpYvBQ@trolley.proxy.rlwy.net:13362/railway';
 $config['db']['username'] = getenv('DB_USERNAME') ?: 'root';
-$config['db']['password'] = getenv('DB_PASSWORD') ?: '';
+$config['db']['password'] = getenv('DB_PASSWORD') ?: 'GkTnEDVazywNfxMOfparmAIaCiMpYvBQ';
 $config['db']['database'] = getenv('DB_DATABASE') ?: 'checkerbot';
 $config['db']['port']     = getenv('DB_PORT') ?: 3306;
 ?>
