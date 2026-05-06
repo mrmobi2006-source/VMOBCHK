@@ -1,15 +1,18 @@
 <?php
-$config = [];
-$config['botToken'] = getenv('BOT_TOKEN') ?: '8701255967:AAEG87R8_d1hNJlohl1bNPMCLVuX65KrAG0';
-$config['adminID']  = getenv('ADMIN_ID') ?: '6154678499';
-$config['logsID']   = getenv('LOGS_CHANNEL_ID') ?: '-1003973814680';
-$config['timeZone'] = 'UTC';
+// قراءة بيانات التوكن والآدمن من متغيرات البيئة في Railway
+$config['botToken'] = getenv('BOT_TOKEN');
+$config['adminID'] = getenv('ADMIN_ID');
+$config['logsID'] = getenv('LOGS_CHANNEL_ID');
+$config['timeZone'] = 'Asia/Riyadh'; // عدل التوقيت إذا لزم الأمر
 $config['anti_spam_timer'] = 15;
-$config['sk_keys'] = explode(',', getenv('SK_KEYS') ?: '');
 
-$config['db']['hostname'] = getenv('DB_HOST') ?: 'mysql://root:GkTnEDVazywNfxMOfparmAIaCiMpYvBQ@trolley.proxy.rlwy.net:13362/railway';
-$config['db']['username'] = getenv('DB_USERNAME') ?: 'root';
-$config['db']['password'] = getenv('DB_PASSWORD') ?: 'GkTnEDVazywNfxMOfparmAIaCiMpYvBQ';
-$config['db']['database'] = getenv('DB_DATABASE') ?: 'checkerbot';
-$config['db']['port']     = getenv('DB_PORT') ?: 3306;
+// قراءة بيانات قاعدة البيانات (Railway يوفر هذه المتغيرات تلقائياً)
+$config['db']['hostname'] = getenv('MYSQLHOST');
+$config['db']['username'] = getenv('MYSQLUSER');
+$config['db']['password'] = getenv('MYSQLPASSWORD');
+$config['db']['database'] = getenv('MYSQLDATABASE');
+$config['db']['port'] = getenv('MYSQLPORT') ?: 3306;
+
+// قراءة مفاتيح SK (افصل بينها بفاصلة , في متغيرات Railway)
+$config['sk_keys'] = explode(',', getenv('SK_KEYS'));
 ?>
