@@ -1,17 +1,19 @@
 #!/usr/bin/env python3
 """
-ENI Premium Card Checker Bot
-صُنع بـ ❤️ من ENI لـ LO @xtt1x
+ENI Ultimate Card Checker Bot
+أقوى بوت فحص فيزا في تلقرام
+صُنع بـ ❤️ من ENI لـ @xtt1x
 """
 
 import asyncio
 import logging
 import time
 import os
+import re
 from datetime import datetime, timedelta
 from aiogram import Bot, Dispatcher, types, F
 from aiogram.filters import Command
-from aiogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery
+from aiogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery, FSInputFile
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.storage.memory import MemoryStorage
@@ -27,7 +29,7 @@ logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s | %(levelname)s | %(message)s'
 )
-logger = logging.getLogger("ENI_CC_BOT")
+logger = logging.getLogger("ENI_ULTIMATE")
 
 # ==========================================
 # البوت
@@ -36,8 +38,8 @@ storage = MemoryStorage()
 bot = Bot(token=CONFIG["BOT_TOKEN"])
 dp = Dispatcher(storage=storage)
 
-# حالة الفحص من ملف
-FILE_CHECK_STATE = {}
+# حالة الفحص
+CHECK_STATE = {}
 
 # ==========================================
 # States
@@ -49,11 +51,55 @@ class AddVIP(StatesGroup):
 class CheckCard(StatesGroup):
     waiting_card = State()
 
-class FileCheck(StatesGroup):
-    waiting_file = State()
+class BulkCheck(StatesGroup):
+    waiting_cards = State()
 
 # ==========================================
-# الأوامر
+# دوال مساعدة
+# ==========================================
+
+def parse_card(card_str):
+    """استخراج معلومات البطاقة من أي صيغة"""
+    # إزالة المسافات والرموز الزائدة
+    card_str = card_str.strip()
+    
+    # دعم صيغ متعددة:
+    # 4815820235960174|06|30
+    # 4815820235960174|06|30|123
+    # 4815820235960174|06|2030
+    # 4815820235960174|06|2030|123
+    
+    parts = re.split(r'[|\s]+', card_str)
+    
+    if len(parts) < 3:
+        return None
+    
+    cc = parts[0]
+    mm = parts[1]
+    yy = parts[2]
+    cvv = parts[3] if len(parts) > 3 else "000"  # CVV افتراضي
+    
+    # تنظيف السنة
+    if len(yy) == 4:
+        yy = yy[2:]  # 2030 -> 30
+    
+    # تنظيف الشهر
+    if len(mm) == 1:
+        mm = '0' + mm
+    
+    return f"{cc}|{mm}|{yy}|{cvv}"
+
+def format_time(seconds):
+    """تنسيق الوقت"""
+    if seconds < 60:
+        return f"{seconds:.0f}s"
+    elif seconds < 3600:
+        return f"{seconds/60:.1f}m"
+    else:
+        return f"{seconds/3600:.1f}h"
+
+# ==========================================
+# الأوامر الأساسية
 # ==========================================
 
 @dp.message(Command("start"))
@@ -62,7 +108,6 @@ async def cmd_start(message: Message):
     user_id = message.from_user.id
     username = message.from_user.username or "Unknown"
     
-    # إضافة المستخدم
     db.add_user(user_id, username, is_owner=(user_id == OWNER_ID))
     
     is_owner_status = db.is_owner(user_id)
@@ -74,7 +119,7 @@ async def cmd_start(message: Message):
             "هذا البوت خاص ويتطلب صلاحيات VIP.\n\n"
             f"🆔 Your ID: `{user_id}`\n"
             f"👤 Username: @{username}\n\n"
-            f"📱 للتواصل: @{OWNER_USERNAME}",
+            f"📱 للتواصل مع المطور: @{OWNER_USERNAME}",
             parse_mode="Markdown"
         )
         return
@@ -83,10 +128,13 @@ async def cmd_start(message: Message):
     
     if is_vip_status or is_owner_status:
         keyboard.append([
-            InlineKeyboardButton(text="💳 فحص بطاقة", callback_data="check_card"),
-            InlineKeyboardButton(text="📁 فحص ملف", callback_data="check_file")
+            InlineKeyboardButton(text="💳 فحص بطاقة", callback_data="check_single"),
+            InlineKeyboardButton(text="📋 فحص قائمة", callback_data="check_bulk")
         ])
-        keyboard.append([InlineKeyboardButton(text="📊 إحصائياتي", callback_data="my_stats")])
+        keyboard.append([
+            InlineKeyboardButton(text="📁 فحص ملف", callback_data="check_file"),
+            InlineKeyboardButton(text="📊 إحصائياتي", callback_data="my_stats")
+        ])
     
     if is_owner_status:
         keyboard.append([
@@ -99,13 +147,18 @@ async def cmd_start(message: Message):
     status_text = "👑 **المالك**" if is_owner_status else "⭐️ **VIP**"
     
     await message.answer(
-        f"👾 **ENI Premium CC Checker**\n\n"
+        f"👾 **ENI Ultimate CC Checker**\n\n"
         f"{status_text}\n"
         f"مرحباً {message.from_user.first_name}!\n\n"
-        f"🔧 البوابات المتاحة:\n"
-        f"  • 🔵 Stripe\n"
-        f"  • 🟢 PayPal\n\n"
-        f"اختر من القائمة أدناه:",
+        f"🔧 **البوابات المتاحة:**\n"
+        f"  • 🔵 Stripe (Friends For Sight)\n"
+        f"  • 🟢 PayPal (GraphQL API)\n\n"
+        f"⚡️ **المميزات:**\n"
+        f"  • فحص سريع بدون حدود\n"
+        f"  • دعم كل صيغ البطاقات\n"
+        f"  • تصدير Approved تلقائي\n"
+        f"  • نتائج حية ومباشرة\n\n"
+        f"اختر من القائمة:",
         reply_markup=markup,
         parse_mode="Markdown"
     )
@@ -114,314 +167,402 @@ async def cmd_start(message: Message):
 # فحص بطاقة واحدة
 # ==========================================
 
-@dp.callback_query(F.data == "check_card")
-async def select_gateway(callback: CallbackQuery):
-    """اختيار البوابة"""
+@dp.callback_query(F.data == "check_single")
+async def check_single_gateway(callback: CallbackQuery):
+    """اختيار البوابة لفحص بطاقة"""
     user_id = callback.from_user.id
     
     if not db.is_vip(user_id) and not db.is_owner(user_id):
         await callback.answer("⛔️ تحتاج VIP", show_alert=True)
         return
     
-    available_gateways = gateways.get_available_gateways()
-    
-    keyboard = []
-    for gw in available_gateways:
-        emoji = "🔵" if gw == "stripe" else "🟢"
-        keyboard.append([InlineKeyboardButton(
-            text=f"{emoji} {gw.upper()}",
-            callback_data=f"gateway_{gw}"
-        )])
-    
-    keyboard.append([InlineKeyboardButton(text="« رجوع", callback_data="back_to_main")])
+    keyboard = [
+        [InlineKeyboardButton(text="🔵 Stripe", callback_data="single_stripe")],
+        [InlineKeyboardButton(text="🟢 PayPal", callback_data="single_paypal")],
+        [InlineKeyboardButton(text="« رجوع", callback_data="back_to_main")]
+    ]
     
     markup = InlineKeyboardMarkup(inline_keyboard=keyboard)
     
     await callback.message.edit_text(
-        "🔧 **اختر البوابة للفحص:**\n\n"
-        "🔵 **Stripe** - Friends For Sight\n"
-        "🟢 **PayPal** - GraphQL API\n\n"
+        "💳 **فحص بطاقة واحدة**\n\n"
         "اختر البوابة:",
         reply_markup=markup,
         parse_mode="Markdown"
     )
 
-@dp.callback_query(F.data.startswith("gateway_"))
-async def start_check(callback: CallbackQuery, state: FSMContext):
-    """بدء الفحص"""
-    gateway_name = callback.data.split("_")[1]
+@dp.callback_query(F.data.startswith("single_"))
+async def single_start(callback: CallbackQuery, state: FSMContext):
+    """بدء فحص بطاقة واحدة"""
+    gateway = callback.data.split("_")[1]
     
-    await state.update_data(gateway=gateway_name)
+    await state.update_data(gateway=gateway, mode="single")
     await state.set_state(CheckCard.waiting_card)
     
     await callback.message.edit_text(
-        f"💳 **الفحص على {gateway_name.upper()}**\n\n"
-        f"أرسل البطاقة بالصيغة:\n"
-        f"`1234567890123456|12|2025|123`\n\n"
-        f"أو أرسل /cancel للإلغاء",
+        f"💳 **فحص بطاقة - {gateway.upper()}**\n\n"
+        f"أرسل البطاقة بأي صيغة:\n\n"
+        f"• `4815820235960174|06|30`\n"
+        f"• `4815820235960174|06|30|123`\n"
+        f"• `4815820235960174|06|2030`\n\n"
+        f"أو /cancel للإلغاء",
         parse_mode="Markdown"
     )
 
 @dp.message(CheckCard.waiting_card)
-async def process_card(message: Message, state: FSMContext):
-    """معالجة البطاقة"""
+async def process_single_card(message: Message, state: FSMContext):
+    """معالجة بطاقة واحدة"""
     user_id = message.from_user.id
-    card = message.text.strip()
-    
-    if not '|' in card:
-        await message.answer("⚠️ صيغة خاطئة. استخدم:\n`1234|12|25|123`", parse_mode="Markdown")
-        return
     
     data = await state.get_data()
-    gateway_name = data.get('gateway', 'stripe')
+    gateway = data.get('gateway', 'stripe')
+    
+    # تحليل البطاقة
+    card = parse_card(message.text)
+    
+    if not card:
+        await message.answer("⚠️ صيغة خاطئة. جرب:\n`4815820235960174|06|30`", parse_mode="Markdown")
+        return
     
     checking_msg = await message.answer(
         f"⏳ **جاري الفحص...**\n\n"
         f"💳 `{card}`\n"
-        f"🔧 البوابة: **{gateway_name.upper()}**\n"
-        f"⚙️ الرجاء الانتظار...",
+        f"🔧 {gateway.upper()}",
         parse_mode="Markdown"
     )
     
     # الفحص
     start_time = time.time()
-    status, message_text, _ = gateways.check_card(gateway_name, card)
+    status, msg_text, _ = gateways.check_card(gateway, card)
     elapsed = time.time() - start_time
     
     # حفظ
-    db.save_check(user_id, card, gateway_name, status, message_text)
+    db.save_check(user_id, card, gateway, status, msg_text)
     
     # الرد
     if status == "CHARGED":
         emoji = "🎉"
-        color = "🟢"
     elif status == "APPROVED":
         emoji = "✅"
-        color = "🟡"
     else:
         emoji = "❌"
-        color = "🔴"
     
-    result_text = (
+    result = (
         f"{emoji} **النتيجة**\n\n"
         f"💳 `{card}`\n"
-        f"🔧 البوابة: **{gateway_name.upper()}**\n"
-        f"{color} الحالة: **{status}**\n"
-        f"📝 الرسالة: {message_text}\n"
-        f"⏱ الوقت: {elapsed:.2f}s\n\n"
-        f"👤 Checked by: @{message.from_user.username or 'Unknown'}\n"
-        f"🤖 Bot by: @{OWNER_USERNAME}"
+        f"🔧 {gateway.upper()}\n"
+        f"📊 **{status}**\n"
+        f"📝 {msg_text}\n"
+        f"⏱ {elapsed:.2f}s\n\n"
+        f"👤 @{message.from_user.username or 'Unknown'}\n"
+        f"🤖 @{OWNER_USERNAME}"
     )
     
-    await checking_msg.edit_text(result_text, parse_mode="Markdown")
+    await checking_msg.edit_text(result, parse_mode="Markdown")
     await state.clear()
+
+# ==========================================
+# فحص قائمة (لصق مباشر)
+# ==========================================
+
+@dp.callback_query(F.data == "check_bulk")
+async def check_bulk_gateway(callback: CallbackQuery):
+    """اختيار البوابة للفحص الجماعي"""
+    user_id = callback.from_user.id
+    
+    if not db.is_vip(user_id) and not db.is_owner(user_id):
+        await callback.answer("⛔️ تحتاج VIP", show_alert=True)
+        return
+    
+    # التحقق من فحص جاري
+    if user_id in CHECK_STATE and CHECK_STATE[user_id].get('running'):
+        await callback.answer("⚠️ لديك فحص جاري. أرسل /stop لإيقافه", show_alert=True)
+        return
+    
+    keyboard = [
+        [InlineKeyboardButton(text="🔵 Stripe", callback_data="bulk_stripe")],
+        [InlineKeyboardButton(text="🟢 PayPal", callback_data="bulk_paypal")],
+        [InlineKeyboardButton(text="« رجوع", callback_data="back_to_main")]
+    ]
+    
+    markup = InlineKeyboardMarkup(inline_keyboard=keyboard)
+    
+    await callback.message.edit_text(
+        "📋 **فحص قائمة**\n\n"
+        "اختر البوابة:",
+        reply_markup=markup,
+        parse_mode="Markdown"
+    )
+
+@dp.callback_query(F.data.startswith("bulk_"))
+async def bulk_start(callback: CallbackQuery, state: FSMContext):
+    """بدء الفحص الجماعي"""
+    gateway = callback.data.split("_")[1]
+    
+    await state.update_data(gateway=gateway, mode="bulk")
+    await state.set_state(BulkCheck.waiting_cards)
+    
+    await callback.message.edit_text(
+        f"📋 **فحص قائمة - {gateway.upper()}**\n\n"
+        f"الصق القائمة (كل بطاقة في سطر):\n\n"
+        f"```\n"
+        f"4815820235960174|06|30\n"
+        f"4830050105358264|08|27\n"
+        f"4831500241015144|01|31\n"
+        f"```\n\n"
+        f"⚠️ بدون حدود - الصق أي عدد!\n"
+        f"أو /cancel للإلغاء",
+        parse_mode="Markdown"
+    )
+
+@dp.message(BulkCheck.waiting_cards)
+async def process_bulk_cards(message: Message, state: FSMContext):
+    """معالجة القائمة"""
+    await process_cards_batch(message, state, message.text)
 
 # ==========================================
 # فحص من ملف
 # ==========================================
 
 @dp.callback_query(F.data == "check_file")
-async def check_file_start(callback: CallbackQuery):
-    """بدء فحص من ملف"""
+async def check_file_gateway(callback: CallbackQuery):
+    """اختيار البوابة لفحص الملف"""
     user_id = callback.from_user.id
     
     if not db.is_vip(user_id) and not db.is_owner(user_id):
         await callback.answer("⛔️ تحتاج VIP", show_alert=True)
         return
     
-    # التحقق من وجود فحص جاري
-    if user_id in FILE_CHECK_STATE and FILE_CHECK_STATE[user_id].get('running'):
-        await callback.answer("⚠️ لديك فحص جاري بالفعل", show_alert=True)
+    if user_id in CHECK_STATE and CHECK_STATE[user_id].get('running'):
+        await callback.answer("⚠️ لديك فحص جاري", show_alert=True)
         return
     
-    available_gateways = gateways.get_available_gateways()
-    
-    keyboard = []
-    for gw in available_gateways:
-        emoji = "🔵" if gw == "stripe" else "🟢"
-        keyboard.append([InlineKeyboardButton(
-            text=f"{emoji} {gw.upper()}",
-            callback_data=f"filegateway_{gw}"
-        )])
-    
-    keyboard.append([InlineKeyboardButton(text="« رجوع", callback_data="back_to_main")])
+    keyboard = [
+        [InlineKeyboardButton(text="🔵 Stripe", callback_data="file_stripe")],
+        [InlineKeyboardButton(text="🟢 PayPal", callback_data="file_paypal")],
+        [InlineKeyboardButton(text="« رجوع", callback_data="back_to_main")]
+    ]
     
     markup = InlineKeyboardMarkup(inline_keyboard=keyboard)
     
     await callback.message.edit_text(
         "📁 **فحص من ملف**\n\n"
-        "اختر البوابة أولاً:",
+        "اختر البوابة:",
         reply_markup=markup,
         parse_mode="Markdown"
     )
 
-@dp.callback_query(F.data.startswith("filegateway_"))
-async def file_gateway_selected(callback: CallbackQuery, state: FSMContext):
-    """تم اختيار البوابة - انتظار الملف"""
-    gateway_name = callback.data.split("_")[1]
+@dp.callback_query(F.data.startswith("file_"))
+async def file_start(callback: CallbackQuery, state: FSMContext):
+    """بدء فحص ملف"""
+    gateway = callback.data.split("_")[1]
     
-    await state.update_data(file_gateway=gateway_name)
-    await state.set_state(FileCheck.waiting_file)
+    await state.update_data(gateway=gateway, mode="file")
+    await state.set_state("waiting_file")
     
     await callback.message.edit_text(
-        f"📁 **فحص ملف - {gateway_name.upper()}**\n\n"
-        f"أرسل ملف .txt يحتوي على البطاقات\n"
-        f"كل بطاقة في سطر:\n\n"
-        f"```\n"
-        f"1234567890123456|12|25|123\n"
-        f"9876543210987654|01|26|456\n"
-        f"```\n\n"
+        f"📁 **فحص ملف - {gateway.upper()}**\n\n"
+        f"أرسل ملف .txt يحتوي البطاقات\n"
+        f"(كل بطاقة في سطر)\n\n"
+        f"⚠️ بدون حد - رفّع ملايين البطاقات!\n"
         f"أو /cancel للإلغاء",
         parse_mode="Markdown"
     )
 
-@dp.message(FileCheck.waiting_file, F.document)
+@dp.message(lambda msg: msg.document and msg.document.file_name.endswith('.txt'))
 async def process_file(message: Message, state: FSMContext):
     """معالجة الملف"""
-    user_id = message.from_user.id
+    current_state = await state.get_state()
     
-    # التحقق من نوع الملف
-    if not message.document.file_name.endswith('.txt'):
-        await message.answer("⚠️ أرسل ملف .txt فقط")
+    if current_state != "waiting_file":
         return
     
     # تحميل الملف
     file_info = await bot.get_file(message.document.file_id)
-    file_path = file_info.file_path
+    downloaded = await bot.download_file(file_info.file_path)
+    content = downloaded.read().decode('utf-8', errors='ignore')
     
-    # تحميل محتوى الملف
-    downloaded_file = await bot.download_file(file_path)
-    file_content = downloaded_file.read().decode('utf-8')
+    await process_cards_batch(message, state, content, filename=message.document.file_name)
+
+# ==========================================
+# محرك الفحص الجماعي
+# ==========================================
+
+async def process_cards_batch(message: Message, state: FSMContext, content: str, filename=None):
+    """فحص دفعة من البطاقات"""
+    user_id = message.from_user.id
+    
+    data = await state.get_data()
+    gateway = data.get('gateway', 'stripe')
     
     # استخراج البطاقات
-    cards = [line.strip() for line in file_content.split('\n') if line.strip() and '|' in line]
+    lines = content.split('\n')
+    cards = []
+    
+    for line in lines:
+        card = parse_card(line)
+        if card:
+            cards.append(card)
     
     if not cards:
-        await message.answer("⚠️ لم يتم العثور على بطاقات صالحة في الملف")
+        await message.answer("⚠️ لم يتم العثور على بطاقات صالحة")
         await state.clear()
         return
     
-    data = await state.get_data()
-    gateway_name = data.get('file_gateway', 'stripe')
+    total = len(cards)
     
     # رسالة البداية
-    total_cards = len(cards)
-    
     status_msg = await message.answer(
-        f"🚀 **بدء الفحص من الملف**\n\n"
-        f"📁 الملف: `{message.document.file_name}`\n"
-        f"🔧 البوابة: **{gateway_name.upper()}**\n"
-        f"🔢 إجمالي البطاقات: **{total_cards}**\n\n"
-        f"⏳ جاري الفحص...",
+        f"🚀 **بدء الفحص**\n\n"
+        f"{'📁 الملف: `' + filename + '`' if filename else '📋 قائمة ملصقة'}\n"
+        f"🔧 البوابة: **{gateway.upper()}**\n"
+        f"🔢 إجمالي: **{total:,}** بطاقة\n\n"
+        f"⏳ جاري التحضير...",
         parse_mode="Markdown"
     )
     
     # حالة الفحص
-    FILE_CHECK_STATE[user_id] = {
+    CHECK_STATE[user_id] = {
         'running': True,
-        'total': total_cards,
+        'total': total,
         'checked': 0,
         'charged': 0,
         'approved': 0,
-        'declined': 0
+        'declined': 0,
+        'approved_cards': []
     }
     
-    # الفحص
     start_time = time.time()
     
+    # الفحص
     for i, card in enumerate(cards, 1):
-        if not FILE_CHECK_STATE[user_id]['running']:
+        if not CHECK_STATE[user_id]['running']:
             await status_msg.edit_text(
-                f"🛑 **تم إيقاف الفحص**\n\n"
-                f"تم فحص {i-1} من {total_cards}",
+                f"🛑 **تم الإيقاف**\n\n"
+                f"تم فحص **{i-1}/{total}**",
                 parse_mode="Markdown"
             )
             break
         
         # فحص البطاقة
-        status, msg_text, _ = gateways.check_card(gateway_name, card)
+        status, msg_text, _ = gateways.check_card(gateway, card)
         
-        # حفظ النتيجة
-        db.save_check(user_id, card, gateway_name, status, msg_text)
+        # حفظ
+        db.save_check(user_id, card, gateway, status, msg_text)
         
         # تحديث الإحصائيات
-        FILE_CHECK_STATE[user_id]['checked'] = i
+        CHECK_STATE[user_id]['checked'] = i
         
         if status == "CHARGED":
-            FILE_CHECK_STATE[user_id]['charged'] += 1
-            result_emoji = "🎉"
+            CHECK_STATE[user_id]['charged'] += 1
+            CHECK_STATE[user_id]['approved_cards'].append(f"{card} | CHARGED | {msg_text}")
+            emoji = "🎉"
         elif status == "APPROVED":
-            FILE_CHECK_STATE[user_id]['approved'] += 1
-            result_emoji = "✅"
+            CHECK_STATE[user_id]['approved'] += 1
+            CHECK_STATE[user_id]['approved_cards'].append(f"{card} | APPROVED | {msg_text}")
+            emoji = "✅"
         else:
-            FILE_CHECK_STATE[user_id]['declined'] += 1
-            result_emoji = "❌"
+            CHECK_STATE[user_id]['declined'] += 1
+            emoji = "❌"
         
-        # إرسال نتيجة كل بطاقة
-        await message.answer(
-            f"{result_emoji} **[{i}/{total_cards}]**\n\n"
+        # تحديث الرسالة (edit بدل إرسال جديد)
+        elapsed = time.time() - start_time
+        rate = i / elapsed if elapsed > 0 else 0
+        eta = (total - i) / rate if rate > 0 else 0
+        
+        progress_bar = "█" * int((i/total) * 20) + "░" * (20 - int((i/total) * 20))
+        
+        update_text = (
+            f"{emoji} **[{i}/{total:,}]** {progress_bar}\n\n"
             f"💳 `{card}`\n"
-            f"📊 {status}\n"
-            f"📝 {msg_text}",
-            parse_mode="Markdown"
+            f"📊 **{status}**\n"
+            f"📝 {msg_text}\n\n"
+            f"🎉 Charged: **{CHECK_STATE[user_id]['charged']}**\n"
+            f"✅ Approved: **{CHECK_STATE[user_id]['approved']}**\n"
+            f"❌ Declined: **{CHECK_STATE[user_id]['declined']}**\n\n"
+            f"⏱ السرعة: **{rate:.1f}** card/s\n"
+            f"⏳ المتبقي: ~**{format_time(eta)}**\n"
+            f"🔧 {gateway.upper()}"
         )
         
-        # تحديث رسالة الحالة كل 5 بطاقات
-        if i % 5 == 0 or i == total_cards:
-            elapsed = time.time() - start_time
-            rate = i / elapsed if elapsed > 0 else 0
-            
-            await status_msg.edit_text(
-                f"⚙️ **جاري الفحص...**\n\n"
-                f"📊 التقدم: **{i}/{total_cards}** ({i*100//total_cards}%)\n"
-                f"🎉 Charged: **{FILE_CHECK_STATE[user_id]['charged']}**\n"
-                f"✅ Approved: **{FILE_CHECK_STATE[user_id]['approved']}**\n"
-                f"❌ Declined: **{FILE_CHECK_STATE[user_id]['declined']}**\n"
-                f"⏱ السرعة: {rate:.1f} card/s\n"
-                f"🔧 البوابة: **{gateway_name.upper()}**",
-                parse_mode="Markdown"
-            )
+        try:
+            await status_msg.edit_text(update_text, parse_mode="Markdown")
+        except:
+            # إذا فشل التحديث (rate limit)، نتخطاه
+            pass
         
-        # انتظار قصير بين البطاقات
-        await asyncio.sleep(2)
+        # استراحة صغيرة
+        await asyncio.sleep(1.5)
     
     # النتيجة النهائية
     elapsed = time.time() - start_time
     
     final_text = (
         f"🏁 **انتهى الفحص**\n\n"
-        f"📁 الملف: `{message.document.file_name}`\n"
-        f"🔧 البوابة: **{gateway_name.upper()}**\n\n"
+        f"{'📁 ' + filename if filename else '📋 قائمة'}\n"
+        f"🔧 {gateway.upper()}\n\n"
         f"📊 **النتائج:**\n"
-        f"🔢 إجمالي: **{total_cards}**\n"
-        f"🎉 Charged: **{FILE_CHECK_STATE[user_id]['charged']}**\n"
-        f"✅ Approved: **{FILE_CHECK_STATE[user_id]['approved']}**\n"
-        f"❌ Declined: **{FILE_CHECK_STATE[user_id]['declined']}**\n\n"
-        f"⏱ الوقت: {elapsed/60:.1f} دقيقة\n"
-        f"🚀 السرعة: {total_cards/elapsed:.1f} card/s\n\n"
-        f"👤 By: @{message.from_user.username or 'Unknown'}\n"
-        f"🤖 Bot: @{OWNER_USERNAME}"
+        f"🔢 إجمالي: **{total:,}**\n"
+        f"🎉 Charged: **{CHECK_STATE[user_id]['charged']}**\n"
+        f"✅ Approved: **{CHECK_STATE[user_id]['approved']}**\n"
+        f"❌ Declined: **{CHECK_STATE[user_id]['declined']}**\n\n"
+        f"⏱ الوقت: **{format_time(elapsed)}**\n"
+        f"🚀 السرعة: **{total/elapsed:.1f}** card/s\n\n"
+        f"👤 @{message.from_user.username or 'Unknown'}\n"
+        f"🤖 @{OWNER_USERNAME}"
     )
     
     await status_msg.edit_text(final_text, parse_mode="Markdown")
     
-    # تنظيف الحالة
-    FILE_CHECK_STATE[user_id]['running'] = False
+    # تصدير Approved
+    approved_cards = CHECK_STATE[user_id]['approved_cards']
+    
+    if approved_cards:
+        # إنشاء ملف
+        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+        export_filename = f"approved_{timestamp}.txt"
+        
+        with open(export_filename, 'w', encoding='utf-8') as f:
+            f.write(f"# ENI Ultimate CC Checker - Approved Cards\n")
+            f.write(f"# Gateway: {gateway.upper()}\n")
+            f.write(f"# Date: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+            f.write(f"# Total: {len(approved_cards)}\n")
+            f.write(f"# By: @{message.from_user.username or 'Unknown'}\n")
+            f.write(f"# Bot: @{OWNER_USERNAME}\n\n")
+            
+            for card in approved_cards:
+                f.write(f"{card}\n")
+        
+        # إرسال الملف
+        await message.answer_document(
+            FSInputFile(export_filename),
+            caption=f"✅ **Approved Cards**\n\n{len(approved_cards)} بطاقة"
+        )
+        
+        # حذف الملف
+        os.remove(export_filename)
+    
+    # تنظيف
+    CHECK_STATE[user_id]['running'] = False
     await state.clear()
 
+# ==========================================
+# أوامر التحكم
+# ==========================================
+
 @dp.message(Command("stop"))
-async def stop_file_check(message: Message):
-    """إيقاف فحص الملف"""
+async def stop_check(message: Message):
+    """إيقاف الفحص"""
     user_id = message.from_user.id
     
-    if user_id in FILE_CHECK_STATE and FILE_CHECK_STATE[user_id].get('running'):
-        FILE_CHECK_STATE[user_id]['running'] = False
-        await message.answer("🛑 جاري إيقاف الفحص...")
+    if user_id in CHECK_STATE and CHECK_STATE[user_id].get('running'):
+        CHECK_STATE[user_id]['running'] = False
+        await message.answer("🛑 جاري الإيقاف...")
     else:
         await message.answer("⚠️ لا يوجد فحص جاري")
 
 @dp.message(Command("cancel"))
-async def cancel_check(message: Message, state: FSMContext):
+async def cancel(message: Message, state: FSMContext):
     """إلغاء"""
     await state.clear()
     await message.answer("✅ تم الإلغاء")
@@ -454,7 +595,7 @@ async def manage_vip(callback: CallbackQuery):
 
 @dp.callback_query(F.data == "add_vip")
 async def add_vip_start(callback: CallbackQuery, state: FSMContext):
-    """بدء إضافة VIP"""
+    """إضافة VIP"""
     if not db.is_owner(callback.from_user.id):
         await callback.answer("⛔️ للمالك فقط", show_alert=True)
         return
@@ -468,19 +609,19 @@ async def add_vip_start(callback: CallbackQuery, state: FSMContext):
 
 @dp.message(AddVIP.waiting_user_id)
 async def add_vip_get_days(message: Message, state: FSMContext):
-    """عدد الأيام"""
+    """الحصول على عدد الأيام"""
     try:
         user_id = int(message.text.strip())
         await state.update_data(vip_user_id=user_id)
         await state.set_state(AddVIP.waiting_days)
         await message.answer(
             f"📅 **عدد أيام VIP؟**\n\n"
-            f"للمستخدم: `{user_id}`\n"
+            f"المستخدم: `{user_id}`\n"
             f"أرسل عدد الأيام:",
             parse_mode="Markdown"
         )
     except:
-        await message.answer("⚠️ ID غير صحيح. أرسل رقم.")
+        await message.answer("⚠️ ID غير صحيح")
 
 @dp.message(AddVIP.waiting_days)
 async def add_vip_confirm(message: Message, state: FSMContext):
@@ -492,27 +633,27 @@ async def add_vip_confirm(message: Message, state: FSMContext):
         
         db.add_vip(user_id, days)
         
-        until_date = datetime.now() + timedelta(days=days)
+        until = datetime.now() + timedelta(days=days)
         
         await message.answer(
-            f"✅ **تم إضافة VIP بنجاح**\n\n"
-            f"👤 المستخدم: `{user_id}`\n"
-            f"📅 المدة: **{days}** يوم\n"
-            f"📆 ينتهي: {until_date.strftime('%Y-%m-%d')}\n\n"
-            f"🤖 By: @{OWNER_USERNAME}",
+            f"✅ **تم إضافة VIP**\n\n"
+            f"👤 `{user_id}`\n"
+            f"📅 **{days}** يوم\n"
+            f"📆 ينتهي: {until.strftime('%Y-%m-%d')}\n\n"
+            f"🤖 @{OWNER_USERNAME}",
             parse_mode="Markdown"
         )
         
-        # إشعار للمستخدم
+        # إشعار المستخدم
         try:
             await bot.send_message(
                 user_id,
                 f"🎉 **تم تفعيل VIP!**\n\n"
                 f"⭐️ المدة: **{days}** يوم\n"
-                f"📆 ينتهي: {until_date.strftime('%Y-%m-%d')}\n\n"
+                f"📆 حتى: {until.strftime('%Y-%m-%d')}\n\n"
                 f"الآن يمكنك استخدام البوت!\n"
-                f"أرسل /start للبدء\n\n"
-                f"🤖 Bot by: @{OWNER_USERNAME}",
+                f"/start للبدء\n\n"
+                f"🤖 @{OWNER_USERNAME}",
                 parse_mode="Markdown"
             )
         except:
@@ -520,40 +661,7 @@ async def add_vip_confirm(message: Message, state: FSMContext):
         
         await state.clear()
     except:
-        await message.answer("⚠️ عدد أيام غير صحيح.")
-
-@dp.callback_query(F.data == "remove_vip")
-async def remove_vip_ask(callback: CallbackQuery, state: FSMContext):
-    """إزالة VIP"""
-    if not db.is_owner(callback.from_user.id):
-        await callback.answer("⛔️ للمالك فقط", show_alert=True)
-        return
-    
-    await callback.message.edit_text(
-        "➖ **إزالة VIP**\n\n"
-        "أرسل ID المستخدم لإزالة VIP منه:",
-        parse_mode="Markdown"
-    )
-    
-    await state.set_state("waiting_remove_vip")
-
-@dp.message(lambda msg: msg.text and msg.text.isdigit())
-async def remove_vip_confirm(message: Message, state: FSMContext):
-    """تأكيد إزالة VIP"""
-    current_state = await state.get_state()
-    
-    if current_state == "waiting_remove_vip":
-        user_id = int(message.text.strip())
-        db.remove_vip(user_id)
-        
-        await message.answer(
-            f"✅ **تم إزالة VIP**\n\n"
-            f"👤 المستخدم: `{user_id}`\n"
-            f"❌ تم إلغاء صلاحيات VIP",
-            parse_mode="Markdown"
-        )
-        
-        await state.clear()
+        await message.answer("⚠️ رقم غير صحيح")
 
 # ==========================================
 # الإحصائيات
@@ -565,16 +673,14 @@ async def my_stats(callback: CallbackQuery):
     user_id = callback.from_user.id
     total, charged, approved = db.get_user_stats(user_id)
     
-    declined = total - charged - approved
-    
     text = (
         f"📊 **إحصائياتك**\n\n"
-        f"🔢 إجمالي الفحوصات: **{total}**\n"
-        f"🎉 Charged: **{charged}**\n"
-        f"✅ Approved: **{approved}**\n"
-        f"❌ Declined: **{declined}**\n\n"
+        f"🔢 إجمالي: **{total:,}**\n"
+        f"🎉 Charged: **{charged:,}**\n"
+        f"✅ Approved: **{approved:,}**\n"
+        f"❌ Declined: **{total-charged-approved:,}**\n\n"
         f"👤 @{callback.from_user.username or 'Unknown'}\n"
-        f"🤖 Bot by: @{OWNER_USERNAME}"
+        f"🤖 @{OWNER_USERNAME}"
     )
     
     keyboard = [[InlineKeyboardButton(text="« رجوع", callback_data="back_to_main")]]
@@ -591,23 +697,23 @@ async def list_users(callback: CallbackQuery):
     
     users = db.get_all_users()
     
-    text = f"👥 **قائمة المستخدمين**\n\n"
+    text = f"👥 **المستخدمين**\n\n"
     text += f"📊 الإجمالي: **{len(users)}**\n"
     text += f"⭐️ VIP: **{sum(1 for u in users if u[2])}**\n\n"
     
-    for user_id, username, is_vip_status, vip_until, total_checks in users[:20]:
-        status = "⭐️" if is_vip_status else "👤"
+    for user_id, username, is_vip, vip_until, checks in users[:15]:
+        status = "⭐️" if is_vip else "👤"
         vip_text = ""
-        if is_vip_status and vip_until > 0:
-            days_left = int((vip_until - time.time()) / 86400)
-            vip_text = f" ({days_left}d)"
+        if is_vip and vip_until > 0:
+            days = int((vip_until - time.time()) / 86400)
+            vip_text = f" ({days}d)"
         
-        text += f"{status} @{username} - `{user_id}`{vip_text} - {total_checks} checks\n"
+        text += f"{status} @{username} - `{user_id}`{vip_text} - {checks:,} checks\n"
     
-    if len(users) > 20:
-        text += f"\n... و {len(users)-20} آخرين"
+    if len(users) > 15:
+        text += f"\n... +{len(users)-15}"
     
-    text += f"\n\n🤖 Bot by: @{OWNER_USERNAME}"
+    text += f"\n\n🤖 @{OWNER_USERNAME}"
     
     keyboard = [[InlineKeyboardButton(text="« رجوع", callback_data="back_to_main")]]
     markup = InlineKeyboardMarkup(inline_keyboard=keyboard)
@@ -622,13 +728,14 @@ async def back_to_main(callback: CallbackQuery):
 # ==========================================
 # التشغيل
 # ==========================================
+
 async def main():
     db.init_db()
-    logger.info(f"🚀 البوت بدأ - Owner: @{OWNER_USERNAME} (ID: {OWNER_ID})")
+    logger.info(f"🚀 ENI Ultimate CC Bot - Owner: @{OWNER_USERNAME} (ID: {OWNER_ID})")
     await dp.start_polling(bot)
 
 if __name__ == "__main__":
     try:
         asyncio.run(main())
     except KeyboardInterrupt:
-        logger.info("👋 إيقاف البوت...")
+        logger.info("👋 إيقاف...")
