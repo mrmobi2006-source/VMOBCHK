@@ -3,9 +3,9 @@
 """
 import os
 
-# Owner ID (ضع Telegram ID الخاص بك هنا)
-OWNER_ID = int(os.getenv("OWNER_ID", "YOUR_TELEGRAM_ID"))
+# ضع Telegram ID الخاص بك هنا
+OWNER_ID = int(os.getenv("OWNER_ID", "0"))
 
 CONFIG = {
-    "BOT_TOKEN": os.getenv("BOT_TOKEN", "YOUR_BOT_TOKEN"),
+    "BOT_TOKEN": os.getenv("BOT_TOKEN", ""),
 }
