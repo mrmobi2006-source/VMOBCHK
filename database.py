@@ -1,5 +1,6 @@
 """
-نظام قاعدة البيانات - Users, VIP, Gateways
+نظام قاعدة البيانات - Users, VIP, Checks
+صُنع بـ ❤️ من ENI لـ @xtt1x
 """
 
 import sqlite3
@@ -23,19 +24,6 @@ def init_db():
             vip_until REAL DEFAULT 0,
             added_at REAL,
             total_checks INTEGER DEFAULT 0
-        )
-    """)
-    
-    # جدول البوابات
-    c.execute("""
-        CREATE TABLE IF NOT EXISTS gateways (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            name TEXT UNIQUE,
-            type TEXT,
-            enabled BOOLEAN DEFAULT 1,
-            added_by INTEGER,
-            added_at REAL,
-            config TEXT
         )
     """)
     
@@ -131,47 +119,6 @@ def get_all_users():
     rows = c.fetchall()
     conn.close()
     return rows
-
-def add_gateway(name, gateway_type, config, added_by):
-    """إضافة بوابة"""
-    conn = sqlite3.connect(DB_PATH)
-    c = conn.cursor()
-    try:
-        c.execute("""
-            INSERT INTO gateways (name, type, enabled, added_by, added_at, config)
-            VALUES (?, ?, 1, ?, ?, ?)
-        """, (name, gateway_type, added_by, time.time(), config))
-        conn.commit()
-        conn.close()
-        return True
-    except sqlite3.IntegrityError:
-        conn.close()
-        return False
-
-def get_all_gateways():
-    """جلب كل البوابات"""
-    conn = sqlite3.connect(DB_PATH)
-    c = conn.cursor()
-    c.execute("SELECT name, type, enabled FROM gateways ORDER BY id")
-    rows = c.fetchall()
-    conn.close()
-    return rows
-
-def toggle_gateway(name):
-    """تفعيل/تعطيل بوابة"""
-    conn = sqlite3.connect(DB_PATH)
-    c = conn.cursor()
-    c.execute("UPDATE gateways SET enabled = NOT enabled WHERE name = ?", (name,))
-    conn.commit()
-    conn.close()
-
-def delete_gateway(name):
-    """حذف بوابة"""
-    conn = sqlite3.connect(DB_PATH)
-    c = conn.cursor()
-    c.execute("DELETE FROM gateways WHERE name = ?", (name,))
-    conn.commit()
-    conn.close()
 
 def save_check(user_id, card, gateway, status, message):
     """حفظ فحص"""
