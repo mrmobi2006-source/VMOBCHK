@@ -2,3 +2,6 @@
 __pycache__/
 *.db
 .env
+*.txt
+!requirements.txt
+!runtime.txt
