@@ -1,6 +1,4 @@
-## 📄 **8. bot.py** - كامل ومحدّث
 
-```python
 #!/usr/bin/env python3
 """
 ENI Ultimate Card Checker Bot
