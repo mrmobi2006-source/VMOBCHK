@@ -83,8 +83,6 @@ def init_db():
     conn.commit()
     conn.close()
 
-# ==================== USER MANAGEMENT ====================
-
 def add_user(user_id, username, is_owner=False):
     """إضافة مستخدم"""
     conn = sqlite3.connect(DB_PATH)
@@ -140,42 +138,18 @@ def block_user(user_id, reason=""):
     """حظر مستخدم"""
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
-    c.execute("""
-        UPDATE users 
-        SET is_blocked = 1 
-        WHERE user_id = ?
-    """, (user_id,))
-    
+    c.execute("UPDATE users SET is_blocked = 1 WHERE user_id = ?", (user_id,))
     if reason:
         log_suspicious_activity(user_id, "BLOCKED", reason)
-    
     conn.commit()
     conn.close()
-
-def unblock_user(user_id):
-    """إلغاء حظر مستخدم"""
-    conn = sqlite3.connect(DB_PATH)
-    c = conn.cursor()
-    c.execute("""
-        UPDATE users 
-        SET is_blocked = 0 
-        WHERE user_id = ?
-    """, (user_id,))
-    conn.commit()
-    conn.close()
-
-# ==================== VIP MANAGEMENT ====================
 
 def add_vip(user_id, days):
     """إضافة VIP لمستخدم"""
     vip_until = time.time() + (days * 86400)
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
-    c.execute("""
-        UPDATE users 
-        SET is_vip = 1, vip_until = ? 
-        WHERE user_id = ?
-    """, (vip_until, user_id))
+    c.execute("UPDATE users SET is_vip = 1, vip_until = ? WHERE user_id = ?", (vip_until, user_id))
     conn.commit()
     conn.close()
 
@@ -183,11 +157,7 @@ def remove_vip(user_id):
     """إزالة VIP"""
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
-    c.execute("""
-        UPDATE users 
-        SET is_vip = 0, vip_until = 0 
-        WHERE user_id = ?
-    """, (user_id,))
+    c.execute("UPDATE users SET is_vip = 0, vip_until = 0 WHERE user_id = ?", (user_id,))
     conn.commit()
     conn.close()
 
@@ -198,12 +168,7 @@ def get_vip_expiry(user_id):
     c.execute("SELECT vip_until FROM users WHERE user_id = ?", (user_id,))
     row = c.fetchone()
     conn.close()
-    
-    if row and row[0] > 0:
-        return row[0]
-    return 0
-
-# ==================== CHECK MANAGEMENT ====================
+    return row[0] if row and row[0] > 0 else 0
 
 def save_check(user_id, card, gateway, status, message, response_time=0):
     """حفظ فحص مع وقت الاستجابة"""
@@ -218,56 +183,27 @@ def save_check(user_id, card, gateway, status, message, response_time=0):
         VALUES (?, ?, ?, ?, ?, ?, ?)
     """, (user_id, card, gateway, status, message, timestamp, response_time))
     
-    # تحديث إحصائيات المستخدم
-    status_column = 'total_checks'
-    if status == 'CHARGED':
-        status_column = 'charged_count'
-    elif status == 'APPROVED':
-        status_column = 'approved_count'
-    elif status == 'DECLINED':
-        status_column = 'declined_count'
+    status_map = {'CHARGED': 'charged_count', 'APPROVED': 'approved_count', 'DECLINED': 'declined_count'}
     
-    c.execute(f"""
-        UPDATE users 
-        SET {status_column} = {status_column} + 1, last_check_time = ?
-        WHERE user_id = ?
-    """, (timestamp, user_id))
+    if status in status_map:
+        c.execute(f"UPDATE users SET {status_map[status]} = {status_map[status]} + 1, last_check_time = ? WHERE user_id = ?", (timestamp, user_id))
+    else:
+        c.execute("UPDATE users SET total_checks = total_checks + 1, last_check_time = ? WHERE user_id = ?", (timestamp, user_id))
     
     conn.commit()
     conn.close()
-
-def get_check_history(user_id, limit=50):
-    """الحصول على سجل الفحوصات"""
-    conn = sqlite3.connect(DB_PATH)
-    c = conn.cursor()
-    c.execute("""
-        SELECT card, gateway, status, message, timestamp
-        FROM checks
-        WHERE user_id = ?
-        ORDER BY timestamp DESC
-        LIMIT ?
-    """, (user_id, limit))
-    rows = c.fetchall()
-    conn.close()
-    return rows
-
-# ==================== STATISTICS ====================
 
 def get_user_stats(user_id):
     """إحصائيات المستخدم"""
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
     
-    c.execute("""
-        SELECT total_checks, charged_count, approved_count, declined_count
-        FROM users WHERE user_id = ?
-    """, (user_id,))
+    c.execute("SELECT total_checks, charged_count, approved_count, declined_count FROM users WHERE user_id = ?", (user_id,))
     row = c.fetchone()
     conn.close()
     
     if row:
-        total, charged, approved, declined = row
-        return total, charged, approved, declined
+        return row
     return 0, 0, 0, 0
 
 def get_global_stats():
@@ -275,55 +211,24 @@ def get_global_stats():
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
     
-    # إجمالي الفحوصات
     c.execute("SELECT SUM(total_checks) FROM users")
     total_checks = c.fetchone()[0] or 0
     
-    # إجمالي المستخدمين
     c.execute("SELECT COUNT(*) FROM users")
     total_users = c.fetchone()[0]
     
-    # المستخدمين النشطين اليوم
-    c.execute("""
-        SELECT COUNT(DISTINCT user_id) FROM checks
-        WHERE timestamp > ?
-    """, (time.time() - 86400,))
+    c.execute("SELECT COUNT(DISTINCT user_id) FROM checks WHERE timestamp > ?", (time.time() - 86400,))
     active_today = c.fetchone()[0]
     
     conn.close()
     
-    return {
-        'total_checks': total_checks,
-        'total_users': total_users,
-        'active_today': active_today
-    }
-
-def get_user_ranking():
-    """ترتيب أفضل المستخدمين"""
-    conn = sqlite3.connect(DB_PATH)
-    c = conn.cursor()
-    c.execute("""
-        SELECT user_id, username, total_checks, charged_count, approved_count
-        FROM users
-        WHERE is_owner = 0
-        ORDER BY total_checks DESC
-        LIMIT 10
-    """)
-    rows = c.fetchall()
-    conn.close()
-    return rows
-
-# ==================== SECURITY ====================
+    return {'total_checks': total_checks, 'total_users': total_users, 'active_today': active_today, 'best_gateway': 'stripe'}
 
 def log_suspicious_activity(user_id, activity_type, description):
     """تسجيل نشاط مريب"""
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
-    c.execute("""
-        INSERT INTO suspicious_activity
-        (user_id, activity_type, description, timestamp)
-        VALUES (?, ?, ?, ?)
-    """, (user_id, activity_type, description, time.time()))
+    c.execute("INSERT INTO suspicious_activity (user_id, activity_type, description, timestamp) VALUES (?, ?, ?, ?)", (user_id, activity_type, description, time.time()))
     conn.commit()
     conn.close()
 
@@ -331,92 +236,16 @@ def check_rate_limit(user_id, max_checks_per_minute=60):
     """التحقق من حد معدل الفحص"""
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
-    
-    c.execute("""
-        SELECT COUNT(*) FROM checks
-        WHERE user_id = ? AND timestamp > ?
-    """, (user_id, time.time() - 60))
-    
+    c.execute("SELECT COUNT(*) FROM checks WHERE user_id = ? AND timestamp > ?", (user_id, time.time() - 60))
     count = c.fetchone()[0]
     conn.close()
-    
     return count < max_checks_per_minute
-
-# ==================== CACHE MANAGEMENT ====================
-
-def cache_set(key, value, ttl=3600):
-    """تخزين قيمة مؤقتاً"""
-    conn = sqlite3.connect(DB_PATH)
-    c = conn.cursor()
-    
-    expires_at = time.time() + ttl
-    c.execute("""
-        INSERT OR REPLACE INTO cache
-        (key, value, expires_at)
-        VALUES (?, ?, ?)
-    """, (key, value, expires_at))
-    
-    conn.commit()
-    conn.close()
-
-def cache_get(key):
-    """الحصول على قيمة مؤقتة"""
-    conn = sqlite3.connect(DB_PATH)
-    c = conn.cursor()
-    
-    c.execute("""
-        SELECT value FROM cache
-        WHERE key = ? AND expires_at > ?
-    """, (key, time.time()))
-    
-    row = c.fetchone()
-    conn.close()
-    
-    return row[0] if row else None
-
-def cache_delete(key):
-    """حذف قيمة مؤقتة"""
-    conn = sqlite3.connect(DB_PATH)
-    c = conn.cursor()
-    c.execute("DELETE FROM cache WHERE key = ?", (key,))
-    conn.commit()
-    conn.close()
-
-# ==================== USER INFORMATION ====================
 
 def get_all_users():
     """جلب كل المستخدمين مع تفاصيلهم"""
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
-    c.execute("""
-        SELECT user_id, username, is_vip, vip_until, total_checks, charged_count, is_blocked
-        FROM users
-    """)
+    c.execute("SELECT user_id, username, is_vip, vip_until, total_checks, charged_count, is_blocked FROM users")
     rows = c.fetchall()
     conn.close()
     return rows
-
-def get_vip_users():
-    """الحصول على مستخدمي VIP النشطين"""
-    conn = sqlite3.connect(DB_PATH)
-    c = conn.cursor()
-    c.execute("""
-        SELECT user_id, username, vip_until, total_checks
-        FROM users
-        WHERE is_vip = 1 AND vip_until > ?
-        ORDER BY vip_until DESC
-    """, (time.time(),))
-    rows = c.fetchall()
-    conn.close()
-    return rows
-
-def get_user_info(user_id):
-    """معلومات المستخدم الكاملة"""
-    conn = sqlite3.connect(DB_PATH)
-    c = conn.cursor()
-    c.execute("""
-        SELECT * FROM users WHERE user_id = ?
-    """, (user_id,))
-    row = c.fetchone()
-    conn.close()
-    return row
