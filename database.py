@@ -29,6 +29,7 @@ def init_db():
             approved_count INTEGER DEFAULT 0,
             declined_count INTEGER DEFAULT 0,
             last_check_time REAL DEFAULT 0,
+            daily_limit INTEGER DEFAULT 1000,
             is_blocked BOOLEAN DEFAULT 0
         )
     """)
@@ -51,10 +52,31 @@ def init_db():
     c.execute("""
         CREATE TABLE IF NOT EXISTS daily_stats (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
-            date TEXT UNIQUE,
-            total_checks INTEGER DEFAULT 0,
-            charged_count INTEGER DEFAULT 0,
-            approved_count INTEGER DEFAULT 0
+            date TEXT,
+            total_checks INTEGER,
+            charged_count INTEGER,
+            approved_count INTEGER,
+            gateway TEXT
+        )
+    """)
+    
+    # جدول الأنشطة المريبة
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS suspicious_activity (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER,
+            activity_type TEXT,
+            description TEXT,
+            timestamp REAL
+        )
+    """)
+    
+    # جدول الرموز المخزنة مؤقتاً
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS cache (
+            key TEXT PRIMARY KEY,
+            value TEXT,
+            expires_at REAL
         )
     """)
     
@@ -114,11 +136,31 @@ def is_blocked(user_id):
     conn.close()
     return row and row[0] == 1
 
-def block_user(user_id):
+def block_user(user_id, reason=""):
     """حظر مستخدم"""
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
-    c.execute("UPDATE users SET is_blocked = 1 WHERE user_id = ?", (user_id,))
+    c.execute("""
+        UPDATE users 
+        SET is_blocked = 1 
+        WHERE user_id = ?
+    """, (user_id,))
+    
+    if reason:
+        log_suspicious_activity(user_id, "BLOCKED", reason)
+    
+    conn.commit()
+    conn.close()
+
+def unblock_user(user_id):
+    """إلغاء حظر مستخدم"""
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    c.execute("""
+        UPDATE users 
+        SET is_blocked = 0 
+        WHERE user_id = ?
+    """, (user_id,))
     conn.commit()
     conn.close()
 
@@ -177,25 +219,37 @@ def save_check(user_id, card, gateway, status, message, response_time=0):
     """, (user_id, card, gateway, status, message, timestamp, response_time))
     
     # تحديث إحصائيات المستخدم
+    status_column = 'total_checks'
     if status == 'CHARGED':
-        c.execute("UPDATE users SET charged_count = charged_count + 1 WHERE user_id = ?", (user_id,))
+        status_column = 'charged_count'
     elif status == 'APPROVED':
-        c.execute("UPDATE users SET approved_count = approved_count + 1 WHERE user_id = ?", (user_id,))
+        status_column = 'approved_count'
     elif status == 'DECLINED':
-        c.execute("UPDATE users SET declined_count = declined_count + 1 WHERE user_id = ?", (user_id,))
+        status_column = 'declined_count'
     
-    c.execute("UPDATE users SET total_checks = total_checks + 1 WHERE user_id = ?", (user_id,))
-    
-    # تحديث الإحصائيات اليومية
-    date_str = datetime.now().strftime('%Y-%m-%d')
-    c.execute("""
-        INSERT INTO daily_stats (date, total_checks)
-        VALUES (?, 1)
-        ON CONFLICT(date) DO UPDATE SET total_checks = total_checks + 1
-    """, (date_str,))
+    c.execute(f"""
+        UPDATE users 
+        SET {status_column} = {status_column} + 1, last_check_time = ?
+        WHERE user_id = ?
+    """, (timestamp, user_id))
     
     conn.commit()
     conn.close()
+
+def get_check_history(user_id, limit=50):
+    """الحصول على سجل الفحوصات"""
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    c.execute("""
+        SELECT card, gateway, status, message, timestamp
+        FROM checks
+        WHERE user_id = ?
+        ORDER BY timestamp DESC
+        LIMIT ?
+    """, (user_id, limit))
+    rows = c.fetchall()
+    conn.close()
+    return rows
 
 # ==================== STATISTICS ====================
 
@@ -244,7 +298,91 @@ def get_global_stats():
         'active_today': active_today
     }
 
-# ==================== USER MANAGEMENT ====================
+def get_user_ranking():
+    """ترتيب أفضل المستخدمين"""
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    c.execute("""
+        SELECT user_id, username, total_checks, charged_count, approved_count
+        FROM users
+        WHERE is_owner = 0
+        ORDER BY total_checks DESC
+        LIMIT 10
+    """)
+    rows = c.fetchall()
+    conn.close()
+    return rows
+
+# ==================== SECURITY ====================
+
+def log_suspicious_activity(user_id, activity_type, description):
+    """تسجيل نشاط مريب"""
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    c.execute("""
+        INSERT INTO suspicious_activity
+        (user_id, activity_type, description, timestamp)
+        VALUES (?, ?, ?, ?)
+    """, (user_id, activity_type, description, time.time()))
+    conn.commit()
+    conn.close()
+
+def check_rate_limit(user_id, max_checks_per_minute=60):
+    """التحقق من حد معدل الفحص"""
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    
+    c.execute("""
+        SELECT COUNT(*) FROM checks
+        WHERE user_id = ? AND timestamp > ?
+    """, (user_id, time.time() - 60))
+    
+    count = c.fetchone()[0]
+    conn.close()
+    
+    return count < max_checks_per_minute
+
+# ==================== CACHE MANAGEMENT ====================
+
+def cache_set(key, value, ttl=3600):
+    """تخزين قيمة مؤقتاً"""
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    
+    expires_at = time.time() + ttl
+    c.execute("""
+        INSERT OR REPLACE INTO cache
+        (key, value, expires_at)
+        VALUES (?, ?, ?)
+    """, (key, value, expires_at))
+    
+    conn.commit()
+    conn.close()
+
+def cache_get(key):
+    """الحصول على قيمة مؤقتة"""
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    
+    c.execute("""
+        SELECT value FROM cache
+        WHERE key = ? AND expires_at > ?
+    """, (key, time.time()))
+    
+    row = c.fetchone()
+    conn.close()
+    
+    return row[0] if row else None
+
+def cache_delete(key):
+    """حذف قيمة مؤقتة"""
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    c.execute("DELETE FROM cache WHERE key = ?", (key,))
+    conn.commit()
+    conn.close()
+
+# ==================== USER INFORMATION ====================
 
 def get_all_users():
     """جلب كل المستخدمين مع تفاصيلهم"""
@@ -272,17 +410,13 @@ def get_vip_users():
     conn.close()
     return rows
 
-def check_rate_limit(user_id, max_checks_per_minute=60):
-    """التحقق من حد معدل الفحص"""
+def get_user_info(user_id):
+    """معلومات المستخدم الكاملة"""
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
-    
     c.execute("""
-        SELECT COUNT(*) FROM checks
-        WHERE user_id = ? AND timestamp > ?
-    """, (user_id, time.time() - 60))
-    
-    count = c.fetchone()[0]
+        SELECT * FROM users WHERE user_id = ?
+    """, (user_id,))
+    row = c.fetchone()
     conn.close()
-    
-    return count < max_checks_per_minute
+    return row
